@@ -1,4 +1,4 @@
-# SlashX - Skill Sharing Platform
+# SkillShare - Skill Sharing Platform
 
 A modern skill-sharing platform built with Next.js, TypeScript, and Tailwind CSS.
 

@@ -10,7 +10,7 @@ import Header from '@/components/Header';
 if (typeof window === 'undefined') { fetch('http://127.0.0.1:7242/ingest/4a827106-1332-4d1b-a7a1-7ea4514f6b81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/page.tsx:5',message:'Header imported',data:{headerExists:!!Header},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{}); }
 // #endregion
 
-import TabNavigation from '@/components/TabNavigation';
+import TabNavigation, { type PostTypeTab } from '@/components/TabNavigation';
 // #region agent log
 if (typeof window === 'undefined') { fetch('http://127.0.0.1:7242/ingest/4a827106-1332-4d1b-a7a1-7ea4514f6b81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/page.tsx:8',message:'TabNavigation imported',data:{tabNavExists:!!TabNavigation},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{}); }
 // #endregion
@@ -25,15 +25,144 @@ import Sidebar from '@/components/Sidebar';
 if (typeof window === 'undefined') { fetch('http://127.0.0.1:7242/ingest/4a827106-1332-4d1b-a7a1-7ea4514f6b81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/page.tsx:14',message:'Sidebar imported',data:{sidebarExists:!!Sidebar},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{}); }
 // #endregion
 
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
+import { useAuth } from '@/contexts/AuthContext';
+import LoginModal from '@/components/LoginModal';
+import ProfileCreationFlow from '@/components/ProfileCreationFlow';
+import CreatePostModal, { type EditPostData } from '@/components/CreatePostModal';
+import { fetchPosts, deletePost, toggleLike, fetchUserLikes, dbPostToCardProps, type DbPost } from '@/lib/database';
 
 export default function Home() {
+  const { isAuthenticated, isLoading: authLoading, user } = useAuth();
   const [isFilterOpen, setIsFilterOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [showLoginModal, setShowLoginModal] = useState(false);
+  const [showProfileFlow, setShowProfileFlow] = useState(false);
+  const [hasCompletedProfile, setHasCompletedProfile] = useState(false);
+  const [showCreatePostModal, setShowCreatePostModal] = useState(false);
+  const [editingPost, setEditingPost] = useState<EditPostData | null>(null);
+  const [dbPosts, setDbPosts] = useState<DbPost[]>([]);
+  const [postsLoading, setPostsLoading] = useState(true);
+  const [userLikedPosts, setUserLikedPosts] = useState<Set<string>>(new Set());
+  const [activeFilters, setActiveFilters] = useState<{ locations: string[]; skills: string[] }>({ locations: [], skills: [] });
+  const [activeTab, setActiveTab] = useState<PostTypeTab>('All');
+
+  // Load posts from Supabase
+  const loadPosts = useCallback(async () => {
+    try {
+      const data = await fetchPosts();
+      setDbPosts(data);
+      // Fetch which posts the current user has liked
+      if (data.length > 0) {
+        const likedSet = await fetchUserLikes(data.map(p => p.id));
+        setUserLikedPosts(likedSet);
+      }
+    } catch (err) {
+      console.error('Error loading posts:', err);
+    } finally {
+      setPostsLoading(false);
+    }
+  }, []);
+
+  // Fetch on mount
+  useEffect(() => {
+    loadPosts();
+  }, [loadPosts]);
+
+  useEffect(() => {
+    // Check for auth success from OAuth callback
+    if (typeof window !== 'undefined') {
+      const urlParams = new URLSearchParams(window.location.search);
+      const authStatus = urlParams.get('auth');
+      if (authStatus === 'success') {
+        // Clear the URL parameter
+        window.history.replaceState({}, '', '/');
+        // Trigger user data refresh from cookie (no page reload needed)
+        const cookies = document.cookie.split(';');
+        const userCookie = cookies.find(cookie => cookie.trim().startsWith('user='));
+        if (userCookie) {
+          try {
+            const userData = JSON.parse(decodeURIComponent(userCookie.split('=')[1]));
+            // Update localStorage so AuthContext picks it up
+            localStorage.setItem('user', JSON.stringify(userData));
+            // Trigger auth success event for AuthContext to update
+            window.dispatchEvent(new Event('auth-success'));
+          } catch (e) {
+            console.error('Error parsing user cookie:', e);
+          }
+        }
+      }
+    }
+    
+    // Check if user has completed profile
+    const profileCompleted = localStorage.getItem('profileCompleted');
+    if (profileCompleted === 'true') {
+      setHasCompletedProfile(true);
+    } else if (isAuthenticated && !authLoading) {
+      // First login via OAuth redirect — show welcome modal
+      setShowProfileFlow(true);
+    }
+  }, [isAuthenticated, authLoading]);
+
+  const handleInteractionClick = () => {
+    if (!isAuthenticated) {
+      setShowLoginModal(true);
+    } else {
+      // Handle interaction for authenticated users
+      console.log('Interaction clicked by authenticated user');
+    }
+  };
+
+  const handleLoginSuccess = () => {
+    setShowLoginModal(false);
+    // Show profile creation flow after successful login/signup
+    if (!hasCompletedProfile) {
+      setShowProfileFlow(true);
+    }
+  };
+
+  const handleProfileComplete = () => {
+    setHasCompletedProfile(true);
+    localStorage.setItem('profileCompleted', 'true');
+    setShowProfileFlow(false);
+  };
+
+  const handleCreatePost = (postData: any) => {
+    console.log('Post saved:', postData);
+  };
+
+  const handlePostCreated = () => {
+    loadPosts(); // Refresh posts from Supabase
+  };
+
+  const handleEditPost = (post: DbPost) => {
+    setEditingPost({
+      id: post.id,
+      type: post.type,
+      locations: post.locations || [],
+      skill_category: post.skill_category,
+      purpose_expectations: post.purpose_expectations,
+      content: post.content,
+      media_urls: post.media_urls || [],
+    });
+    setShowCreatePostModal(true);
+  };
+
+  const handleDeletePost = async (postId: string) => {
+    if (!confirm('Are you sure you want to delete this post?')) return;
+    try {
+      await deletePost(postId);
+      loadPosts(); // Refresh the list
+    } catch (error) {
+      console.error('Error deleting post:', error);
+      alert('Failed to delete post. Please try again.');
+    }
+  };
+
   // #region agent log
   if (typeof window === 'undefined') { fetch('http://127.0.0.1:7242/ingest/4a827106-1332-4d1b-a7a1-7ea4514f6b81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/page.tsx:20',message:'Home component render start',data:{timestamp:Date.now()},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{}); }
   // #endregion
-  const posts = [
+  const demoPosts = [
     {
       name: 'Alex Mitchell',
       role: 'Musician',
@@ -74,7 +203,7 @@ export default function Home() {
   ];
 
   // #region agent log
-  if (typeof window === 'undefined') { fetch('http://127.0.0.1:7242/ingest/4a827106-1332-4d1b-a7a1-7ea4514f6b81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/page.tsx:30',message:'Before render return',data:{postsCount:posts.length},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{}); }
+  if (typeof window === 'undefined') { fetch('http://127.0.0.1:7242/ingest/4a827106-1332-4d1b-a7a1-7ea4514f6b81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/page.tsx:30',message:'Before render return',data:{postsCount:dbPosts.length},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{}); }
   // #endregion
 
   // #region agent log
@@ -83,17 +212,80 @@ export default function Home() {
 
   const handleApplyFilters = async (selectedLocations: string[], selectedSkills: string[]) => {
     setIsLoading(true);
-    // Simulate search/API call
-    await new Promise(resolve => setTimeout(resolve, 1500));
+    // Brief loading animation
+    await new Promise(resolve => setTimeout(resolve, 400));
+    setActiveFilters({ locations: selectedLocations, skills: selectedSkills });
     setIsLoading(false);
-    // Here you would filter the posts based on selectedLocations and selectedSkills
-    console.log('Applied filters:', { selectedLocations, selectedSkills });
   };
+
+  // Filter posts based on active filters
+  const filterPost = (postLocations: string[], postSkill: string | null) => {
+    const { locations, skills } = activeFilters;
+    const hasLocationFilter = locations.length > 0;
+    const hasSkillFilter = skills.length > 0 && skills[0] !== '';
+
+    if (!hasLocationFilter && !hasSkillFilter) return true; // No filters → show all
+
+    let locationMatch = !hasLocationFilter; // If no location filter, auto-pass
+    let skillMatch = !hasSkillFilter; // If no skill filter, auto-pass
+
+    if (hasLocationFilter) {
+      // Check if any selected filter location matches any post location
+      locationMatch = locations.some(filterLoc =>
+        postLocations.some(postLoc =>
+          postLoc.toLowerCase().includes(filterLoc.toLowerCase()) ||
+          filterLoc.toLowerCase().includes(postLoc.toLowerCase())
+        )
+      );
+    }
+
+    if (hasSkillFilter) {
+      const filterSkill = skills[0].toLowerCase();
+      skillMatch = postSkill
+        ? postSkill.toLowerCase().includes(filterSkill) || filterSkill.includes(postSkill.toLowerCase())
+        : false;
+    }
+
+    // Both filters must match (AND logic)
+    return locationMatch && skillMatch;
+  };
+
+  const filteredDbPosts = dbPosts.filter(p => {
+    if (activeTab !== 'All' && p.type !== activeTab) return false;
+    return filterPost(p.locations || [], p.skill_category);
+  });
+
+  const filteredDemoPosts = activeTab !== 'All'
+    ? [] // Demo posts don't have a real type, hide them when filtering by type
+    : demoPosts.filter(p =>
+        filterPost(
+          p.location ? p.location.split(',').map(l => l.trim()) : [],
+          p.skills?.[0] || null
+        )
+      );
+
+  // Show loading state while checking auth
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Header />
-      <TabNavigation />
+      <Header 
+        onLoginClick={() => setShowLoginModal(true)} 
+        onCreatePostClick={() => {
+          if (!isAuthenticated) {
+            setShowLoginModal(true);
+          } else {
+            setShowCreatePostModal(true);
+          }
+        }}
+      />
+      <TabNavigation activeTab={activeTab} onTabChange={setActiveTab} />
       
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Mobile Filter Toggle Button */}
@@ -118,9 +310,104 @@ export default function Home() {
                 </div>
               </div>
             )}
-            {posts.map((post, idx) => (
-              <PostCard key={idx} {...post} />
-            ))}
+            {/* Active filter badges */}
+            {(activeFilters.locations.length > 0 || (activeFilters.skills.length > 0 && activeFilters.skills[0] !== '')) && (
+              <div className="flex flex-wrap items-center gap-2 mb-4 p-3 bg-blue-50 rounded-lg border border-blue-100">
+                <span className="text-xs font-medium text-blue-700 shrink-0">Active filters:</span>
+                {activeFilters.locations.map(loc => (
+                  <span
+                    key={loc}
+                    className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium ${
+                      loc === 'Virtual' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-700'
+                    }`}
+                  >
+                    {loc === 'Virtual' && (
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                      </svg>
+                    )}
+                    {loc}
+                    <button
+                      onClick={() => {
+                        const newLocations = activeFilters.locations.filter(l => l !== loc);
+                        setActiveFilters({ ...activeFilters, locations: newLocations });
+                      }}
+                      className="ml-0.5 hover:text-red-500"
+                    >
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </span>
+                ))}
+                {activeFilters.skills.filter(s => s !== '').map(skill => (
+                  <span
+                    key={skill}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 bg-blue-100 text-blue-700 rounded-full text-xs font-medium"
+                  >
+                    #{skill}
+                    <button
+                      onClick={() => {
+                        const newSkills = activeFilters.skills.filter(s => s !== skill);
+                        setActiveFilters({ ...activeFilters, skills: newSkills });
+                      }}
+                      className="ml-0.5 hover:text-red-500"
+                    >
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </span>
+                ))}
+                <button
+                  onClick={() => setActiveFilters({ locations: [], skills: [] })}
+                  className="text-xs text-red-500 hover:text-red-700 font-medium ml-1"
+                >
+                  Clear all
+                </button>
+              </div>
+            )}
+            {postsLoading ? (
+              <div className="flex justify-center py-8">
+                <div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+              </div>
+            ) : (
+              <>
+                {/* Database posts (newest first) */}
+                {filteredDbPosts.map((dbPost) => {
+                  const cardProps = dbPostToCardProps(dbPost);
+                  return (
+                    <PostCard
+                      key={cardProps.id}
+                      {...cardProps}
+                      onInteractionClick={handleInteractionClick}
+                      isOwner={!!user && user.id === dbPost.user_id}
+                      onEdit={() => handleEditPost(dbPost)}
+                      onDelete={() => handleDeletePost(dbPost.id)}
+                      initialHasLiked={userLikedPosts.has(dbPost.id)}
+                      onLike={async () => {
+                        if (!isAuthenticated) { handleInteractionClick(); return; }
+                        return await toggleLike(dbPost.id);
+                      }}
+                    />
+                  );
+                })}
+                {/* Demo posts */}
+                {filteredDemoPosts.map((post, idx) => (
+                  <PostCard key={`demo-${idx}`} {...post} onInteractionClick={handleInteractionClick} />
+                ))}
+                {/* No results message */}
+                {filteredDbPosts.length === 0 && filteredDemoPosts.length === 0 && (
+                  <div className="text-center py-12 text-gray-500">
+                    <svg className="w-12 h-12 mx-auto mb-3 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                    </svg>
+                    <p className="text-lg font-medium">No posts found</p>
+                    <p className="text-sm mt-1">Try adjusting your filters</p>
+                  </div>
+                )}
+              </>
+            )}
           </div>
 
           {/* Sidebar */}
@@ -155,6 +442,40 @@ export default function Home() {
           </div>
         </div>
       )}
+
+      {/* Login Modal */}
+      <LoginModal
+        isOpen={showLoginModal}
+        onClose={() => setShowLoginModal(false)}
+        onSuccess={handleLoginSuccess}
+      />
+
+      {/* Profile Creation Flow */}
+      <ProfileCreationFlow
+        isOpen={showProfileFlow}
+        onClose={() => setShowProfileFlow(false)}
+        onComplete={handleProfileComplete}
+        onStartManual={() => {
+          // Go straight to creating a service post
+          setShowCreatePostModal(true);
+        }}
+        onStartAI={() => {
+          // AI guide — future feature, for now just close
+        }}
+      />
+
+      {/* Create Post Modal */}
+      <CreatePostModal
+        key={showCreatePostModal ? (editingPost?.id || 'new-post') : 'closed'}
+        isOpen={showCreatePostModal}
+        onClose={() => {
+          setShowCreatePostModal(false);
+          setEditingPost(null);
+        }}
+        onSubmit={handleCreatePost}
+        onPostCreated={handlePostCreated}
+        editPost={editingPost}
+      />
     </div>
   );
 }
