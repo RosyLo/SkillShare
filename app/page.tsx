@@ -1,28 +1,28 @@
 // #region agent log
 'use client';
-if (typeof window === 'undefined') { fetch('http://127.0.0.1:7242/ingest/4a827106-1332-4d1b-a7a1-7ea4514f6b81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/page.tsx:1',message:'Page component import start',data:{timestamp:Date.now()},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{}); }
+if (typeof window === 'undefined') { fetch('http://127.0.0.1:7242/ingest/4a827106-1332-4d1b-a7a1-7ea4514f6b81', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'app/page.tsx:1', message: 'Page component import start', data: { timestamp: Date.now() }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'B' }) }).catch(() => { }); }
 // #endregion
 
 
 
 import Header from '@/components/Header';
 // #region agent log
-if (typeof window === 'undefined') { fetch('http://127.0.0.1:7242/ingest/4a827106-1332-4d1b-a7a1-7ea4514f6b81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/page.tsx:5',message:'Header imported',data:{headerExists:!!Header},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{}); }
+if (typeof window === 'undefined') { fetch('http://127.0.0.1:7242/ingest/4a827106-1332-4d1b-a7a1-7ea4514f6b81', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'app/page.tsx:5', message: 'Header imported', data: { headerExists: !!Header }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'B' }) }).catch(() => { }); }
 // #endregion
 
 import TabNavigation, { type PostTypeTab } from '@/components/TabNavigation';
 // #region agent log
-if (typeof window === 'undefined') { fetch('http://127.0.0.1:7242/ingest/4a827106-1332-4d1b-a7a1-7ea4514f6b81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/page.tsx:8',message:'TabNavigation imported',data:{tabNavExists:!!TabNavigation},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{}); }
+if (typeof window === 'undefined') { fetch('http://127.0.0.1:7242/ingest/4a827106-1332-4d1b-a7a1-7ea4514f6b81', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'app/page.tsx:8', message: 'TabNavigation imported', data: { tabNavExists: !!TabNavigation }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'B' }) }).catch(() => { }); }
 // #endregion
 
 import PostCard from '@/components/PostCard';
 // #region agent log
-if (typeof window === 'undefined') { fetch('http://127.0.0.1:7242/ingest/4a827106-1332-4d1b-a7a1-7ea4514f6b81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/page.tsx:11',message:'PostCard imported',data:{postCardExists:!!PostCard},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{}); }
+if (typeof window === 'undefined') { fetch('http://127.0.0.1:7242/ingest/4a827106-1332-4d1b-a7a1-7ea4514f6b81', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'app/page.tsx:11', message: 'PostCard imported', data: { postCardExists: !!PostCard }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'B' }) }).catch(() => { }); }
 // #endregion
 
 import Sidebar from '@/components/Sidebar';
 // #region agent log
-if (typeof window === 'undefined') { fetch('http://127.0.0.1:7242/ingest/4a827106-1332-4d1b-a7a1-7ea4514f6b81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/page.tsx:14',message:'Sidebar imported',data:{sidebarExists:!!Sidebar},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{}); }
+if (typeof window === 'undefined') { fetch('http://127.0.0.1:7242/ingest/4a827106-1332-4d1b-a7a1-7ea4514f6b81', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'app/page.tsx:14', message: 'Sidebar imported', data: { sidebarExists: !!Sidebar }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'B' }) }).catch(() => { }); }
 // #endregion
 
 import { useState, useEffect, useCallback } from 'react';
@@ -30,7 +30,10 @@ import { useAuth } from '@/contexts/AuthContext';
 import LoginModal from '@/components/LoginModal';
 import ProfileCreationFlow from '@/components/ProfileCreationFlow';
 import CreatePostModal, { type EditPostData } from '@/components/CreatePostModal';
-import { fetchPosts, deletePost, toggleLike, fetchUserLikes, dbPostToCardProps, type DbPost } from '@/lib/database';
+import AIGuideFlow from '@/components/AIGuideFlow';
+import AIGeneratedProfile from '@/components/AIGeneratedProfile';
+import { fetchPosts, deletePost, toggleLike, fetchUserLikes, dbPostToCardProps, saveAIGuideResult, type DbPost, type AIGuidePayload } from '@/lib/database';
+import { useRouter } from 'next/navigation';
 
 export default function Home() {
   const { isAuthenticated, isLoading: authLoading, user } = useAuth();
@@ -46,6 +49,10 @@ export default function Home() {
   const [userLikedPosts, setUserLikedPosts] = useState<Set<string>>(new Set());
   const [activeFilters, setActiveFilters] = useState<{ locations: string[]; skills: string[] }>({ locations: [], skills: [] });
   const [activeTab, setActiveTab] = useState<PostTypeTab>('All');
+  const [showAIGuide, setShowAIGuide] = useState(false);
+  const [showAIPreview, setShowAIPreview] = useState(false);
+  const [aiGuideData, setAiGuideData] = useState<AIGuidePayload | null>(null);
+  const router = useRouter();
 
   // Load posts from Supabase
   const loadPosts = useCallback(async () => {
@@ -93,7 +100,7 @@ export default function Home() {
         }
       }
     }
-    
+
     // Check if user has completed profile
     const profileCompleted = localStorage.getItem('profileCompleted');
     if (profileCompleted === 'true') {
@@ -160,7 +167,7 @@ export default function Home() {
   };
 
   // #region agent log
-  if (typeof window === 'undefined') { fetch('http://127.0.0.1:7242/ingest/4a827106-1332-4d1b-a7a1-7ea4514f6b81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/page.tsx:20',message:'Home component render start',data:{timestamp:Date.now()},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{}); }
+  if (typeof window === 'undefined') { fetch('http://127.0.0.1:7242/ingest/4a827106-1332-4d1b-a7a1-7ea4514f6b81', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'app/page.tsx:20', message: 'Home component render start', data: { timestamp: Date.now() }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'C' }) }).catch(() => { }); }
   // #endregion
   const demoPosts = [
     {
@@ -203,11 +210,11 @@ export default function Home() {
   ];
 
   // #region agent log
-  if (typeof window === 'undefined') { fetch('http://127.0.0.1:7242/ingest/4a827106-1332-4d1b-a7a1-7ea4514f6b81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/page.tsx:30',message:'Before render return',data:{postsCount:dbPosts.length},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{}); }
+  if (typeof window === 'undefined') { fetch('http://127.0.0.1:7242/ingest/4a827106-1332-4d1b-a7a1-7ea4514f6b81', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'app/page.tsx:30', message: 'Before render return', data: { postsCount: dbPosts.length }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'C' }) }).catch(() => { }); }
   // #endregion
 
   // #region agent log
-  if (typeof window === 'undefined') { fetch('http://127.0.0.1:7242/ingest/4a827106-1332-4d1b-a7a1-7ea4514f6b81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/page.tsx:34',message:'Rendering Header',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{}); }
+  if (typeof window === 'undefined') { fetch('http://127.0.0.1:7242/ingest/4a827106-1332-4d1b-a7a1-7ea4514f6b81', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'app/page.tsx:34', message: 'Rendering Header', data: {}, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'D' }) }).catch(() => { }); }
   // #endregion
 
   const handleApplyFilters = async (selectedLocations: string[], selectedSkills: string[]) => {
@@ -258,11 +265,11 @@ export default function Home() {
   const filteredDemoPosts = activeTab !== 'All'
     ? [] // Demo posts don't have a real type, hide them when filtering by type
     : demoPosts.filter(p =>
-        filterPost(
-          p.location ? p.location.split(',').map(l => l.trim()) : [],
-          p.skills?.[0] || null
-        )
-      );
+      filterPost(
+        p.location ? p.location.split(',').map(l => l.trim()) : [],
+        p.skills?.[0] || null
+      )
+    );
 
   // Show loading state while checking auth
   if (authLoading) {
@@ -275,8 +282,8 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Header 
-        onLoginClick={() => setShowLoginModal(true)} 
+      <Header
+        onLoginClick={() => setShowLoginModal(true)}
         onCreatePostClick={() => {
           if (!isAuthenticated) {
             setShowLoginModal(true);
@@ -286,7 +293,7 @@ export default function Home() {
         }}
       />
       <TabNavigation activeTab={activeTab} onTabChange={setActiveTab} />
-      
+
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Mobile Filter Toggle Button */}
         <button
@@ -317,9 +324,8 @@ export default function Home() {
                 {activeFilters.locations.map(loc => (
                   <span
                     key={loc}
-                    className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium ${
-                      loc === 'Virtual' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-700'
-                    }`}
+                    className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium ${loc === 'Virtual' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-700'
+                      }`}
                   >
                     {loc === 'Virtual' && (
                       <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -420,7 +426,7 @@ export default function Home() {
       {/* Mobile Filter Overlay */}
       {isFilterOpen && (
         <div className="lg:hidden fixed inset-0 z-50 bg-black bg-opacity-50" onClick={() => setIsFilterOpen(false)}>
-          <div 
+          <div
             className="absolute right-0 top-0 h-full w-full max-w-sm bg-white shadow-xl overflow-y-auto"
             onClick={(e) => e.stopPropagation()}
           >
@@ -460,7 +466,7 @@ export default function Home() {
           setShowCreatePostModal(true);
         }}
         onStartAI={() => {
-          // AI guide — future feature, for now just close
+          setShowAIGuide(true);
         }}
       />
 
@@ -476,6 +482,40 @@ export default function Home() {
         onPostCreated={handlePostCreated}
         editPost={editingPost}
       />
+
+      {/* AI Onboarding Flow */}
+      <AIGuideFlow
+        isOpen={showAIGuide}
+        onClose={() => setShowAIGuide(false)}
+        onComplete={(data: AIGuidePayload) => {
+          // Instead of saving immediately, show preview
+          setAiGuideData(data);
+          setShowAIGuide(false);
+          setShowAIPreview(true);
+        }}
+      />
+
+      {/* AI Guide Preview Modal */}
+      {aiGuideData && (
+        <AIGeneratedProfile
+          isOpen={showAIPreview}
+          onClose={() => {
+            setShowAIPreview(false);
+            setAiGuideData(null);
+          }}
+          userId={user?.id || ''}
+          userName={user?.name || 'User'}
+          userAvatar={user?.picture || null}
+          payload={aiGuideData}
+          onComplete={() => {
+            setShowAIPreview(false);
+            setAiGuideData(null);
+            if (user?.id) {
+              router.push(`/profile/${user.id}`);
+            }
+          }}
+        />
+      )}
     </div>
   );
 }

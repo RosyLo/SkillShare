@@ -11,14 +11,49 @@ import {
   deletePost,
   dbPostToCardProps,
   getTimeAgo,
+  saveAIGuideResult,
+  createSlashService,
+  updateSlashService,
   type DbProfile,
   type DbPost,
   type DbProfileService,
+  type AIGuidePayload,
 } from '@/lib/database';
 import Header from '@/components/Header';
 import LoginModal from '@/components/LoginModal';
 import CreatePostModal, { type EditPostData } from '@/components/CreatePostModal';
 import ProfileCreationFlow from '@/components/ProfileCreationFlow';
+import AIGuideFlow from '@/components/AIGuideFlow';
+import AIGeneratedProfile from '@/components/AIGeneratedProfile';
+import CreateServiceModal from '@/components/CreateServiceModal';
+
+const AutoResizeTextarea = ({ value, onChange, className, placeholder, rows = 1 }: {
+  value: string;
+  onChange: (val: string) => void;
+  className?: string;
+  placeholder?: string;
+  rows?: number;
+}) => {
+  const textareaRef = React.useRef<HTMLTextAreaElement>(null);
+
+  React.useEffect(() => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+      textareaRef.current.style.height = textareaRef.current.scrollHeight + 'px';
+    }
+  }, [value]);
+
+  return (
+    <textarea
+      ref={textareaRef}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className={`${className} overflow-hidden transition-all duration-75`}
+      placeholder={placeholder}
+      rows={rows}
+    />
+  );
+};
 
 export default function ProfilePage() {
   const params = useParams();
@@ -47,6 +82,11 @@ export default function ProfilePage() {
 
   // Welcome modal state
   const [showWelcomeModal, setShowWelcomeModal] = useState(false);
+  const [showAIGuide, setShowAIGuide] = useState(false);
+  const [showAIPreview, setShowAIPreview] = useState(false);
+  const [showCreateServiceModal, setShowCreateServiceModal] = useState(false);
+  const [editingService, setEditingService] = useState<any>(null);
+  const [aiGuideData, setAiGuideData] = useState<AIGuidePayload | null>(null);
 
   const handleEditPost = (post: DbPost) => {
     setEditingPost({
@@ -69,6 +109,23 @@ export default function ProfilePage() {
     } catch (error) {
       console.error('Error deleting post:', error);
       alert('Failed to delete post. Please try again.');
+    }
+  };
+
+  const handleCreateService = async (serviceData: any) => {
+    if (!userId) return;
+    try {
+      if (editingService) {
+        await updateSlashService(editingService.id, serviceData);
+      } else {
+        await createSlashService(userId, serviceData);
+      }
+      // Refresh services
+      const data = await fetchProfileServices(userId);
+      setServices(data);
+    } catch (error) {
+      console.error('Failed to save service:', error);
+      throw error;
     }
   };
 
@@ -155,6 +212,7 @@ export default function ProfilePage() {
 
   const displayName = profile?.display_name || posts[0]?.user_name || 'User';
   const avatarUrl = profile?.avatar_url || posts[0]?.user_picture || null;
+  const bannerUrl = profile?.banner_url || null;
 
   // Group posts by type for different sections
   const recentPosts = posts.filter(p => p.type === 'experience').slice(0, 6);
@@ -173,33 +231,74 @@ export default function ProfilePage() {
     <div className="min-h-screen bg-gray-50">
       <Header
         onLoginClick={() => setShowLoginModal(true)}
-        onCreatePostClick={() => router.push('/')}
+        onCreatePostClick={() => setShowCreatePostModal(true)}
       />
 
       <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Profile Header Card */}
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden mb-8">
-          {/* Gradient Banner */}
-          <div className="h-32 sm:h-40 bg-gradient-to-r from-blue-100 via-pink-100 to-purple-100 relative">
+          {/* Gradient Banner or Image */}
+          <div className="h-40 bg-gray-100 relative group">
+            {bannerUrl ? (
+              <img src={bannerUrl} alt="Banner" className="w-full h-full object-cover" />
+            ) : (
+              <div className="w-full h-full bg-gradient-to-r from-blue-100 via-pink-100 to-purple-100"></div>
+            )}
+
+            {isOwner && (
+              <div className="absolute inset-0 bg-black/10 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                <label className="cursor-pointer bg-white/90 px-4 py-2 rounded-xl shadow-sm flex items-center gap-2 hover:bg-white transition-all transform hover:scale-105">
+                  <svg className="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+                  </svg>
+                  <span className="text-xs font-bold text-blue-600 uppercase tracking-wider">Change Banner</span>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      if (file) {
+                        try {
+                          const { uploadPostImage } = await import('@/lib/database');
+                          const url = await uploadPostImage(file);
+                          const updated = await upsertProfile({
+                            banner_url: url,
+                            display_name: profile?.display_name,
+                            heading: profile?.heading || undefined,
+                            slash_story: profile?.slash_story || undefined
+                          });
+                          setProfile(updated);
+                        } catch (err) {
+                          alert('Upload failed');
+                        }
+                      }
+                    }}
+                  />
+                </label>
+              </div>
+            )}
+
             {isProfileIncomplete && (
               <button
                 onClick={() => setShowWelcomeModal(true)}
-                className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-10 bg-white/90 backdrop-blur-sm rounded-xl px-5 py-3 shadow-md hover:shadow-lg hover:bg-white transition-all flex items-center gap-3 group"
+                className="absolute top-4 right-4 z-10 bg-white/90 backdrop-blur-sm rounded-xl px-4 py-2 shadow-md hover:shadow-lg hover:bg-white transition-all flex items-center gap-2 group/journey"
               >
-                <div className="w-8 h-8 rounded-lg bg-purple-100 flex items-center justify-center flex-shrink-0">
-                  <svg className="w-5 h-5 text-purple-600" fill="none" viewBox="0 0 24 24">
+                <div className="w-6 h-6 rounded-lg bg-purple-100 flex items-center justify-center flex-shrink-0">
+                  <svg className="w-4 h-4 text-purple-600" fill="none" viewBox="0 0 24 24">
                     <path stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.455 2.456L21.75 6l-1.036.259a3.375 3.375 0 00-2.455 2.456zM16.894 20.567L16.5 21.75l-.394-1.183a2.25 2.25 0 00-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 001.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 001.423 1.423l1.183.394-1.183.394a2.25 2.25 0 00-1.423 1.423z" />
                   </svg>
                 </div>
-                <span className="text-sm font-medium text-gray-700 group-hover:text-gray-900 transition-colors">
-                  AI journey help you build your profile and service
+                <span className="text-xs font-semibold text-gray-700 group-hover/journey:text-gray-900 transition-colors">
+                  AI Journey
                 </span>
               </button>
             )}
           </div>
 
           {/* Avatar + Info */}
-          <div className="px-6 pb-6 -mt-16 sm:-mt-20">
+          <div className="px-6 pb-6 -mt-16 sm:-mt-20 relative z-20">
             <div className="flex items-end gap-4">
               <div className="w-24 h-24 sm:w-32 sm:h-32 rounded-2xl bg-orange-50 border-4 border-white shadow-lg flex items-center justify-center overflow-hidden flex-shrink-0">
                 {avatarUrl ? (
@@ -281,18 +380,41 @@ export default function ProfilePage() {
         </div>
 
         {/* The Slash Story */}
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-8">
-          <div className="group relative">
-            <h2 className="text-xs font-bold text-blue-600 tracking-widest uppercase mb-3">THE SLASH STORY</h2>
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-8 group">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-xs font-bold text-blue-600 tracking-widest uppercase">THE SLASH STORY</h2>
+            {isOwner && profile?.slash_story && !isEditingStory && (
+              <button
+                onClick={async () => {
+                  if (confirm('Are you sure you want to remove your story section?')) {
+                    setIsSaving(true);
+                    try {
+                      const updated = await upsertProfile({
+                        display_name: profile?.display_name || user?.name || 'User',
+                        slash_story: '',
+                      });
+                      setProfile(updated);
+                    } finally {
+                      setIsSaving(false);
+                    }
+                  }
+                }}
+                className="opacity-0 group-hover:opacity-100 transition-opacity text-[10px] font-bold text-red-500 uppercase tracking-widest px-2 py-1 rounded-md hover:bg-red-50"
+              >
+                Remove
+              </button>
+            )}
+          </div>
+
+          <div className="relative">
             {isEditingStory ? (
               <div className="space-y-2">
-                <textarea
+                <AutoResizeTextarea
                   value={editStory}
-                  onChange={(e) => setEditStory(e.target.value)}
+                  onChange={setEditStory}
                   placeholder="Share your personal story... What brought you here? What's your journey?"
-                  className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none text-gray-600 italic"
+                  className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-gray-600 italic"
                   rows={4}
-                  maxLength={1000}
                 />
                 <div className="flex items-center gap-2">
                   <button
@@ -314,25 +436,38 @@ export default function ProfilePage() {
             ) : (
               <div className="flex items-start gap-2">
                 {profile?.slash_story ? (
-                  <p className="text-gray-600 italic leading-relaxed">&ldquo;{profile.slash_story}&rdquo;</p>
+                  <>
+                    <p className="text-gray-600 italic leading-relaxed">&ldquo;{profile.slash_story}&rdquo;</p>
+                    {isOwner && (
+                      <button
+                        onClick={() => {
+                          setEditStory(profile?.slash_story || '');
+                          setIsEditingStory(true);
+                        }}
+                        className="opacity-0 group-hover:opacity-100 transition-opacity p-1.5 hover:bg-gray-100 rounded-lg flex-shrink-0"
+                        title="Edit story"
+                      >
+                        <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                        </svg>
+                      </button>
+                    )}
+                  </>
                 ) : isOwner ? (
-                  <p className="text-gray-400 italic">Click the pencil to share your story...</p>
+                  <div className="w-full py-8 flex flex-col items-center justify-center border-2 border-dashed border-gray-100 rounded-2xl bg-gray-50/30">
+                    <p className="text-gray-400 text-sm mb-4">Slash Story is currently hidden</p>
+                    <button
+                      onClick={() => {
+                        setEditStory('');
+                        setIsEditingStory(true);
+                      }}
+                      className="px-6 py-2 bg-blue-600 text-white rounded-full text-xs font-bold shadow-sm hover:bg-blue-700 transition-all"
+                    >
+                      Add Slash Story
+                    </button>
+                  </div>
                 ) : (
                   <p className="text-gray-400 italic">No story yet</p>
-                )}
-                {isOwner && (
-                  <button
-                    onClick={() => {
-                      setEditStory(profile?.slash_story || '');
-                      setIsEditingStory(true);
-                    }}
-                    className="opacity-0 group-hover:opacity-100 transition-opacity p-1.5 hover:bg-gray-100 rounded-lg flex-shrink-0"
-                    title="Edit story"
-                  >
-                    <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                    </svg>
-                  </button>
                 )}
               </div>
             )}
@@ -416,7 +551,7 @@ export default function ProfilePage() {
             <div className="flex items-center gap-3">
               {isOwner && (
                 <button
-                  onClick={() => router.push('/')}
+                  onClick={() => setShowCreateServiceModal(true)}
                   className="text-blue-600 text-sm hover:underline font-medium"
                 >
                   Add Service
@@ -452,13 +587,27 @@ export default function ProfilePage() {
             >
               {/* Database services */}
               {services.map((svc) => (
-                <div key={svc.id} className="bg-white rounded-xl border border-gray-200 p-5 flex-shrink-0 w-[calc(33.333%-11px)] min-w-[220px]">
-                  <div className={`w-10 h-10 rounded-lg flex items-center justify-center mb-3 ${
-                    svc.icon_color === 'green' ? 'bg-green-50' : svc.icon_color === 'orange' ? 'bg-orange-50' : 'bg-blue-50'
-                  }`}>
-                    <svg className={`w-5 h-5 ${
-                      svc.icon_color === 'green' ? 'text-green-600' : svc.icon_color === 'orange' ? 'text-orange-600' : 'text-blue-600'
-                    }`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <div key={svc.id} className="bg-white rounded-xl border border-gray-200 p-5 flex-shrink-0 w-[calc(33.333%-11px)] min-w-[220px] relative group/svc">
+                  {isOwner && (
+                    <div className="absolute top-2 right-2 opacity-0 group-hover/svc:opacity-100 transition-opacity">
+                      <button
+                        onClick={() => {
+                          setEditingService(svc);
+                          setShowCreateServiceModal(true);
+                        }}
+                        className="p-1.5 bg-white border border-gray-100 rounded-lg shadow-sm hover:bg-gray-50 text-gray-400 hover:text-gray-600 transition-all"
+                        title="Edit service"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                        </svg>
+                      </button>
+                    </div>
+                  )}
+                  <div className={`w-10 h-10 rounded-lg flex items-center justify-center mb-3 ${svc.icon_color === 'green' ? 'bg-green-50' : svc.icon_color === 'orange' ? 'bg-orange-50' : 'bg-blue-50'
+                    }`}>
+                    <svg className={`w-5 h-5 ${svc.icon_color === 'green' ? 'text-green-600' : svc.icon_color === 'orange' ? 'text-orange-600' : 'text-blue-600'
+                      }`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
                     </svg>
                   </div>
@@ -470,7 +619,7 @@ export default function ProfilePage() {
                     <p className="text-xs text-gray-500 mt-1 line-clamp-2">{svc.description}</p>
                   )}
                   <div className="flex items-center justify-between mt-4">
-                    {svc.price && <span className="text-sm font-bold text-blue-600">{svc.price}</span>}
+                    {svc.price && <span className="text-sm font-bold text-blue-600">${svc.price}/{svc.price_unit || 'session'}</span>}
                     {svc.service_type && <span className="text-xs text-gray-500">{svc.service_type}</span>}
                   </div>
                 </div>
@@ -536,6 +685,9 @@ export default function ProfilePage() {
           setShowCreatePostModal(false);
           setEditingPost(null);
         }}
+        onSubmit={(postData) => {
+          console.log('Post saved from profile page:', postData);
+        }}
         onPostCreated={() => loadData()}
         editPost={editingPost}
       />
@@ -552,8 +704,54 @@ export default function ProfilePage() {
           setShowCreatePostModal(true);
         }}
         onStartAI={() => {
-          // AI guide — future feature
+          setShowAIGuide(true);
         }}
+      />
+
+      {/* AI Onboarding Flow */}
+      <AIGuideFlow
+        isOpen={showAIGuide}
+        onClose={() => setShowAIGuide(false)}
+        onComplete={(data: AIGuidePayload) => {
+          // Instead of saving immediately, show preview
+          setAiGuideData(data);
+          setShowAIGuide(false);
+          setShowAIPreview(true);
+        }}
+      />
+
+      {/* AI Guide Preview Modal */}
+      {aiGuideData && (
+        <AIGeneratedProfile
+          isOpen={showAIPreview}
+          onClose={() => {
+            setShowAIPreview(false);
+            setAiGuideData(null);
+          }}
+          userId={user?.id || ''}
+          userName={user?.name || 'User'}
+          userAvatar={user?.picture || null}
+          userBanner={profile?.banner_url}
+          payload={aiGuideData}
+          existingHeading={profile?.heading}
+          existingStory={profile?.slash_story}
+          onComplete={() => {
+            setShowAIPreview(false);
+            setAiGuideData(null);
+            // Reload profile data
+            loadData();
+          }}
+        />
+      )}
+
+      <CreateServiceModal
+        isOpen={showCreateServiceModal}
+        onClose={() => {
+          setShowCreateServiceModal(false);
+          setEditingService(null);
+        }}
+        onConfirm={handleCreateService}
+        initialData={editingService}
       />
     </div>
   );

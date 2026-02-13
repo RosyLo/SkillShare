@@ -393,6 +393,8 @@ export interface DbProfile {
   is_verified: boolean;
   heading: string | null;
   slash_story: string | null;
+  banner_url: string | null;
+  skills: string[] | null;
   created_at: string;
   updated_at: string;
 }
@@ -403,12 +405,44 @@ export interface DbProfileService {
   title: string;
   description: string | null;
   category: string | null;
-  price: string | null;
+  price: number | null;
+  price_unit: string | null;
   service_type: string | null;
   icon_color: string;
   sort_order: number;
   created_at: string;
   updated_at: string;
+}
+
+export interface DbSlashProfile {
+  id: string;
+  user_id: string;
+  heading: string | null;
+  slash_story: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+// AI Guide aggregated payload (4-step onboarding result)
+export interface AIGuidePayload {
+  selectedSkills: string[];
+  primarySkill: string | null;
+  experienceYears: string | null;
+  hasTaught: 'yes' | 'no' | null;
+  confidenceSkill: number;
+  confidenceDesign: number;
+  micDropTopic: string;
+  micDropDetails: string;
+  sosProblem: string;
+  sos: string;
+  sosStep1: string;
+  sosStep2: string;
+  sosStep3: string;
+  skillTeachingStory: string;
+  skillFocus: string;
+  skillYear: string;
+  skillConfidenceLevel: number;
+  skillConfidenceLevelEvent: string;
 }
 
 /** Fetch a profile by user_id */
@@ -432,6 +466,7 @@ export async function upsertProfile(profile: {
   heading?: string;
   slash_story?: string;
   avatar_url?: string;
+  banner_url?: string;
 }): Promise<DbProfile> {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error('You must be logged in');
@@ -446,6 +481,7 @@ export async function upsertProfile(profile: {
       'User',
     heading: profile.heading ?? null,
     slash_story: profile.slash_story ?? null,
+    banner_url: profile.banner_url || null,
     avatar_url:
       profile.avatar_url ||
       user.user_metadata?.avatar_url ||
@@ -470,13 +506,12 @@ export async function upsertProfile(profile: {
 /** Fetch services for a user */
 export async function fetchProfileServices(userId: string): Promise<DbProfileService[]> {
   const { data, error } = await supabase
-    .from('profile_services')
+    .from('slash_services')
     .select('*')
-    .eq('user_id', userId)
-    .order('sort_order', { ascending: true });
+    .eq('user_id', userId);
 
   if (error) {
-    console.error('Error fetching profile services:', error);
+    console.error('Error fetching slash services:', error);
     return [];
   }
   return data || [];
@@ -495,6 +530,188 @@ export async function fetchPostsByUser(userId: string): Promise<DbPost[]> {
     return [];
   }
   return data || [];
+}
+
+/**
+ * Save AI Guide (4-step flow) result into:
+ * - slash_survey
+ * - slash_services (one suggested 3-step service blueprint)
+ * - profiles.onboarding_status → 'completed'
+ */
+export async function saveAIGuideResult(payload: AIGuidePayload, aiServices?: any[]): Promise<void> {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error('You must be logged in to save AI guide data');
+
+  const micDropTopic = payload.micDropTopic;
+  const skillTeachingStory = payload.skillTeachingStory;
+
+  // 1) Upsert slash_survey row
+  const slashProfileRow = {
+    user_id: user.id,
+    potential_skill_tags: payload.selectedSkills.length > 0 ? payload.selectedSkills : null,
+    status: 'draft' as const,
+    updated_at: new Date().toISOString(),
+    micDropTopic,
+    skillTeachingStory,
+    skillFocus: payload.skillFocus,
+    skillYear: payload.skillYear,
+    skillConfidenceLevel: payload.skillConfidenceLevel,
+    skillConfidenceLevelEvent: payload.skillConfidenceLevelEvent,
+  };
+
+  const { error: spError } = await supabase
+    .from('slash_survey')
+    .upsert(slashProfileRow, { onConflict: 'user_id' });
+
+  if (spError) {
+    console.error('Error saving slash profile from AI guide:', spError);
+    throw spError;
+  }
+
+  // 2) Save Services
+  if (aiServices && aiServices.length > 0) {
+    for (const svc of aiServices) {
+      const blueprint = {
+        primary_skill: payload.primarySkill,
+        experience_years: payload.experienceYears,
+        problem: payload.sosProblem,
+        steps: svc.blueprint.map((step: any, idx: number) => ({
+          order: idx + 1,
+          title: step.title,
+          content: step.content
+        })),
+      };
+
+      // Ensure duration and price are pure integers
+      const durationVal = typeof svc.duration === 'string'
+        ? parseInt(svc.duration.replace(/[^0-9]/g, '')) || null
+        : (typeof svc.duration === 'number' ? svc.duration : null);
+
+      const priceVal = typeof svc.price === 'string'
+        ? parseInt(svc.price.replace(/[^0-9]/g, '')) || null
+        : (typeof svc.price === 'number' ? svc.price : null);
+
+      const { error: svcError } = await supabase
+        .from('slash_services')
+        .insert({
+          user_id: user.id,
+          title: svc.title,
+          category_badge: svc.category || '1-ON-1 SESSION',
+          hashtag: payload.primarySkill ? `#${payload.primarySkill}` : null,
+          description: svc.description,
+          blueprint_steps: blueprint,
+          price: priceVal,
+          price_unit: svc.price_unit || 'session',
+          duration_min: durationVal,
+          delivery_method: 'online',
+          status: 'suggested',
+          origin: 'ai_generated',
+        });
+
+      if (svcError) {
+        console.error('Error saving slash service from AI guide:', svcError);
+      }
+    }
+  } else {
+    // Fallback to default service if no AI services provided
+    const blueprint = {
+      primary_skill: payload.primarySkill,
+      experience_years: payload.experienceYears,
+      confidence: {
+        skill: payload.confidenceSkill,
+        design: payload.confidenceDesign,
+      },
+      problem: payload.sosProblem,
+      steps: [
+        { order: 1, title: 'Setup', content: payload.sosStep1 },
+        { order: 2, title: 'Action', content: payload.sosStep2 },
+        { order: 3, title: 'Result', content: payload.sosStep3 },
+      ],
+    };
+
+    const serviceTitle =
+      payload.primarySkill
+        ? `${payload.primarySkill} – 3-Step Rescue`
+        : 'My 3-Step Rescue Session';
+
+    await supabase
+      .from('slash_services')
+      .insert({
+        user_id: user.id,
+        title: serviceTitle,
+        category_badge: '1-ON-1 SESSION',
+        hashtag: payload.primarySkill ? `#${payload.primarySkill}` : null,
+        description: payload.skillTeachingStory || payload.micDropDetails || null,
+        blueprint_steps: blueprint,
+        price: null,
+        duration_min: null,
+        delivery_method: 'online',
+        status: 'suggested',
+        origin: 'ai_generated',
+      });
+  }
+}
+
+/**
+ * Final confirmation: Save the edited AI-generated profile and services
+ */
+export async function confirmAIProfileGeneration(
+  userId: string,
+  profile: { heading: string; story: string },
+  services: any[]
+): Promise<void> {
+  // 1) Upsert into slash_profile
+  const { error: profileError } = await supabase
+    .from('slash_profile')
+    .upsert({
+      user_id: userId,
+      heading: profile.heading,
+      slash_story: profile.story,
+      updated_at: new Date().toISOString()
+    }, { onConflict: 'user_id' });
+
+  if (profileError) {
+    console.error('Error saving slash_profile:', profileError);
+    throw profileError;
+  }
+
+  // 2) Save selected services into slash_services
+  if (services && services.length > 0) {
+    for (const svc of services) {
+      // Ensure duration and price are pure integers
+      const durationVal = typeof svc.duration === 'string'
+        ? parseInt(svc.duration.replace(/[^0-9]/g, '')) || null
+        : (typeof svc.duration === 'number' ? svc.duration : null);
+
+      const priceVal = typeof svc.price === 'string'
+        ? parseInt(svc.price.replace(/[^0-9]/g, '')) || null
+        : (typeof svc.price === 'number' ? svc.price : null);
+
+      const { error: svcError } = await supabase
+        .from('slash_services')
+        .insert({
+          user_id: userId,
+          title: svc.title,
+          category_badge: svc.category || '1-ON-1 SESSION',
+          description: svc.description,
+          price: priceVal,
+          price_unit: svc.price_unit || 'session',
+          duration_min: durationVal,
+          status: 'confirmed',
+          origin: 'ai_generated',
+          blueprint_steps: svc.blueprint ? {
+            steps: svc.blueprint.map((step: any, idx: number) => ({
+              order: idx + 1,
+              title: step.title,
+              content: step.content
+            }))
+          } : null
+        });
+      if (svcError) {
+        console.error('Error saving confirmed service:', svcError);
+      }
+    }
+  }
 }
 
 // =============================================
@@ -545,4 +762,87 @@ export function dbPostToCardProps(post: DbPost) {
     images: post.media_urls || [],
     mediaUrls: post.media_urls || [],
   };
+}
+
+/** Save a manually created service */
+export async function createSlashService(userId: string, svc: {
+  title: string;
+  description: string;
+  category: string;
+  price: number;
+  price_unit: string;
+  duration: number;
+  blueprint: { title: string; content: string }[];
+}): Promise<void> {
+  // Ensure duration and price are pure integers
+  const durationVal = typeof svc.duration === 'number' ? svc.duration : parseInt(String(svc.duration).replace(/[^0-9]/g, '')) || 0;
+  const priceVal = typeof svc.price === 'number' ? svc.price : parseInt(String(svc.price).replace(/[^0-9]/g, '')) || 0;
+
+  const { error } = await supabase
+    .from('slash_services')
+    .insert({
+      user_id: userId,
+      title: svc.title,
+      category_badge: svc.category || '1-ON-1 SESSION',
+      description: svc.description,
+      price: priceVal,
+      price_unit: svc.price_unit || 'session',
+      duration_min: durationVal,
+      status: 'confirmed',
+      origin: 'manual',
+      delivery_method: 'online',
+      blueprint_steps: svc.blueprint && svc.blueprint.length > 0 ? {
+        steps: svc.blueprint.map((step, idx) => ({
+          order: idx + 1,
+          title: step.title,
+          content: step.content
+        }))
+      } : null
+    });
+
+  if (error) {
+    console.error('Error creating standalone service:', error);
+    throw error;
+  }
+}
+
+/** Update an existing service */
+export async function updateSlashService(serviceId: string, svc: {
+  title: string;
+  description: string;
+  category: string;
+  price: number;
+  price_unit: string;
+  duration: number;
+  blueprint: { title: string; content: string }[];
+}): Promise<void> {
+  // Ensure duration and price are pure integers
+  const durationVal = typeof svc.duration === 'number' ? svc.duration : parseInt(String(svc.duration).replace(/[^0-9]/g, '')) || 0;
+  const priceVal = typeof svc.price === 'number' ? svc.price : parseInt(String(svc.price).replace(/[^0-9]/g, '')) || 0;
+
+  const { error } = await supabase
+    .from('slash_services')
+    .update({
+      title: svc.title,
+      category_badge: svc.category || '1-ON-1 SESSION',
+      description: svc.description,
+      price: priceVal,
+      price_unit: svc.price_unit || 'session',
+      duration_min: durationVal,
+      status: 'confirmed',
+      blueprint_steps: svc.blueprint && svc.blueprint.length > 0 ? {
+        steps: svc.blueprint.map((step, idx) => ({
+          order: idx + 1,
+          title: step.title,
+          content: step.content
+        }))
+      } : null,
+      updated_at: new Date().toISOString()
+    })
+    .eq('id', serviceId);
+
+  if (error) {
+    console.error('Error updating service:', error);
+    throw error;
+  }
 }
